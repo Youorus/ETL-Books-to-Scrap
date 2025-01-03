@@ -1,8 +1,9 @@
-from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+from datetime import datetime
 import csv
-import re
+
 
 # 1. Fonction pour extraire les informations d'un produit
 def extract_product_info(url):
@@ -28,9 +29,9 @@ def extract_product_info(url):
     return product_info
 
 
-import csv
-import re
-from datetime import datetime
+
+
+
 
 
 def write_to_csv(product_data, catalogue_name=None):
@@ -66,3 +67,58 @@ def write_to_csv(product_data, catalogue_name=None):
                 writer.writeheader()
                 writer.writerow(product)
             print(f"Produit exporté individuellement : {file_name}")
+
+
+base_url = "https://books.toscrape.com/catalogue/"
+
+
+# Fonction pour récupérer les liens des produits d'un catalogue
+def get_catalogue_links(url_catalogue):
+    links = []
+
+    while True:
+        # Effectuer la requête HTTP pour chaque page
+        response = requests.get(url_catalogue)
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Récupérer tous les articles de la page actuelle
+        articles = soup.find_all('article')
+        catalogue_name = soup.find(class_="page-header action").get_text(strip=True)
+
+        for article in articles:
+            link = article.find('a').attrs['href']
+            # Construire l'URL absolue
+            url_product = urljoin(base_url, link.replace('../../../', ''))
+            links.append(url_product)
+
+        # Vérifier s'il y a une page suivante
+        is_next = soup.find(class_="next")
+
+        if is_next:
+            next_page = is_next.find('a')['href']
+            url_catalogue = urljoin(url_catalogue, next_page)
+        else:
+            break
+
+    return links, catalogue_name
+
+# 5. Exporter un seul produit par son URL
+def export_product_info(url):
+    product_info = extract_product_info(url)
+    write_to_csv(product_info)
+    print(f"Produit exporté : {product_info['Product Title']}")
+
+
+def export_product_infos_catalogue(url_catalogue):
+    # Récupérer les liens des produits et le nom du catalogue
+    product_links, catalogue_name = get_catalogue_links(url_catalogue)
+
+    # Extraire les infos de chaque produit et les stocker dans une liste
+    all_products = []
+
+    for link in product_links:
+        product_info = extract_product_info(link)  # Extraire les infos du produit
+        all_products.append(product_info)  # Ajouter à la liste
+
+    # Créer le fichier CSV global
+    write_to_csv(all_products, catalogue_name)
