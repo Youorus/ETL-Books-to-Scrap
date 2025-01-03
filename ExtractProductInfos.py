@@ -4,43 +4,65 @@ from bs4 import BeautifulSoup
 import csv
 import re
 
-url = "/--ENTRER L'URL DU PRODUIT ICI--/"
-
-def getProductsInfos(url):
+# 1. Fonction pour extraire les informations d'un produit
+def extract_product_info(url):
     # Récupérer la page
-    page = requests.get(url)
-    soup = BeautifulSoup(page.content, 'html.parser')
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-    # Extraire les données du produit
-    table = soup.find('table', class_='table table-striped')
+    # Extraire le titre du produit
     product_title = soup.find('h1').get_text()
 
-    # Ajouter la date
-    create_at = datetime.now().strftime("%Y-%m-%d")
+    # Extraire la table des détails du produit
+    table = soup.find('table', class_='table table-striped')
 
     # Initialisation des en-têtes et des valeurs
-    headers = ['Product Title']
-    product_infos = [product_title]
+    product_info = {'Product Title': product_title}
 
-    # Nom du fichier CSV
-    csv_file = f"{product_title}_infos_{create_at}.csv"
-
-    # Parcourir la table pour ajouter les en-têtes et valeurs
+    # Parcourir les lignes de la table
     for tr in table.find_all('tr'):
         th = tr.find('th').get_text()
         td = tr.find('td').get_text()
+        product_info[th] = td
 
-        headers.append(th)
-        product_infos.append(td)
-
-    # Écriture des données dans un fichier CSV
-    with open(csv_file, 'w', newline='') as file:
-        writer = csv.writer(file, delimiter=',')
-        writer.writerow(headers)
-        writer.writerow(product_infos)
-
-    print(f"Le fichier {csv_file} a été créé avec succès.")
+    return product_info
 
 
-# Appel de la fonction
-getProductsInfos(url)
+import csv
+import re
+from datetime import datetime
+
+
+def write_to_csv(product_data, catalogue_name=None):
+    # Si aucune donnée, arrêter
+    if not product_data:
+        print("Aucune donnée à écrire.")
+        return
+
+    # Cas d'un seul produit (dictionnaire)
+    if isinstance(product_data, dict):
+        product_data = [product_data]  # Convertir en liste pour uniformiser
+
+    # Si catalogue_name est fourni, créer un fichier global pour le catalogue
+    if catalogue_name:
+        file_name = f"{catalogue_name}_catalogue_infos_{datetime.now().strftime('%Y-%m-%d')}.csv"
+
+        # Écriture dans le fichier global
+        with open(file_name, 'w', newline='', encoding='utf-8') as file:
+            writer = csv.DictWriter(file, fieldnames=product_data[0].keys())
+            writer.writeheader()
+            writer.writerows(product_data)
+        print(f"Catalogue complet exporté : {file_name}")
+
+    # Si aucun catalogue_name, créer un fichier CSV par produit
+    else:
+        for product in product_data:
+            product_title =  product['Product Title']
+            file_name = f"{product_title}_infos_{datetime.now().strftime('%Y-%m-%d')}.csv"
+
+            # Écriture pour chaque produit individuellement
+            with open(file_name, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.DictWriter(file, fieldnames=product.keys())
+                writer.writeheader()
+                writer.writerow(product)
+            print(f"Produit exporté individuellement : {file_name}")
