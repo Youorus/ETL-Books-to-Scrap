@@ -1,60 +1,87 @@
+import os
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from datetime import datetime
 import csv
+import re
 
 
-# 1. Fonction pour extraire les informations d'un produit
-def extract_product_details(url):
+def extract_product_details(url, image_folder):
+    """
+    Extrait les détails d'un produit à partir de l'URL de la page produit.
+    Télécharge également l'image associée au produit.
+    """
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
 
-    product_title = soup.find('h1').get_text()
+    # Extraire le titre du produit
+    product_title = soup.find('h1').get_text().strip()
+
+    # Extraire l'URL de l'image du produit
+    img_tag = soup.find('div', class_='item active').find('img')
+    img_src = img_tag['src']
+    img_url = urljoin(url, img_src)
+
+    # Nettoyer et limiter la longueur du nom
+    safe_title = re.sub(r'[^A-Za-z0-9 ]+', '', product_title)[:100]
+    if not safe_title:
+        safe_title = "Unknown_Product"
+
+    # Utiliser la date et l'heure pour éviter les doublons
+    date_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+    image_name = f"{safe_title}_{date_str}_image.jpg"
+
+    # Construire le chemin de l'image
+    image_path = os.path.join(image_folder, image_name)
+
+    # Télécharger l'image
+    download_image(img_url, image_path)
+
+    # Extraire les détails du produit
+    product_info = {'Product Title': product_title}
     product_details_table = soup.find('table', class_='table table-striped')
 
-    product_info = {'Product Title': product_title}
-
     for row in product_details_table.find_all('tr'):
-        header = row.find('th').get_text()
-        value = row.find('td').get_text()
+        header = row.find('th').get_text(strip=True)
+        value = row.find('td').get_text(strip=True)
         product_info[header] = value
 
     return product_info
 
 
-# 2. Fonction pour écrire des données dans un fichier CSV
-def save_to_csv(product_data, catalogue_name=None):
+def save_to_csv(product_data, catalogue_name, folder):
+    """
+    Enregistre les informations des produits dans un fichier CSV.
+    """
     if not product_data:
-        print("Aucune donnée à écrire.")
+        print("Aucune donnée à enregistrer.")
         return
 
-    # Gérer le cas d'un produit unique
+    # Créer le dossier s'il n'existe pas
+    os.makedirs(folder, exist_ok=True)
+
+    # Créer le nom du fichier CSV
+    file_name = f"{catalogue_name}_infos_{datetime.now().strftime('%Y-%m-%d')}.csv"
+    save_path = os.path.join(folder, file_name)
+
+    # Gérer les cas d'un produit unique
     if isinstance(product_data, dict):
         product_data = [product_data]
 
-    # Si un catalogue est spécifié
-    if catalogue_name:
-        file_name = f"{catalogue_name}_catalogue_infos_product{datetime.now().strftime('%Y-%m-%d')}.csv"
-        with open(file_name, 'w', newline='', encoding='utf-8') as file:
-            writer = csv.DictWriter(file, fieldnames=product_data[0].keys())
-            writer.writeheader()
-            writer.writerows(product_data)
-        print(f"Catalogue complet exporté : {file_name}")
-    else:
-        # Exporter chaque produit individuellement
-        for product in product_data:
-            product_title = product['Product Title']
-            file_name = f"{product_title}_infos_{datetime.now().strftime('%Y-%m-%d')}.csv"
-            with open(file_name, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.DictWriter(file, fieldnames=product.keys())
-                writer.writeheader()
-                writer.writerow(product)
-            print(f"Produit exporté individuellement : {file_name}")
+    # Enregistrer dans un fichier CSV
+    with open(save_path, 'w', newline='', encoding='utf-8') as file:
+        writer = csv.DictWriter(file, fieldnames=product_data[0].keys())
+        writer.writeheader()
+        writer.writerows(product_data)
+
+    print(f"Catalogue exporté : {save_path}")
 
 
-# 3. Fonction pour récupérer les liens de tous les produits dans un catalogue
 def fetch_catalogue_product_links(url_catalogue):
+    """
+    Récupère les liens de tous les produits d'un catalogue.
+    """
     links = []
     catalogue_name = None
 
@@ -62,15 +89,17 @@ def fetch_catalogue_product_links(url_catalogue):
         response = requests.get(url_catalogue)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        articles = soup.find_all('article')
+        # Extraire le nom du catalogue
         catalogue_name = soup.find(class_="page-header action").get_text(strip=True)
 
+        # Récupérer les liens vers les produits
+        articles = soup.find_all('article')
         for article in articles:
-            product_link = article.find('a').attrs['href']
+            product_link = article.find('a')['href']
             absolute_link = urljoin(base_url, product_link.replace('../../../', ''))
             links.append(absolute_link)
 
-        # Vérifier la pagination
+        # Passer à la page suivante s'il y en a une
         next_page = soup.find(class_="next")
         if next_page:
             next_page_link = next_page.find('a')['href']
@@ -81,15 +110,30 @@ def fetch_catalogue_product_links(url_catalogue):
     return links, catalogue_name
 
 
-# 4. Fonction pour exporter un seul produit
 def export_single_product(url):
-    product_info = extract_product_details(url)
-    save_to_csv(product_info)
+    """
+    Exporte les informations d'un seul produit dans un dossier spécifique.
+    """
+    product_folder = os.path.join("Product_Info")
+    os.makedirs(product_folder, exist_ok=True)
+
+    # Dossier pour les images
+    image_folder = os.path.join(product_folder, 'images')
+    os.makedirs(image_folder, exist_ok=True)
+
+    # Extraire les détails du produit
+    product_info = extract_product_details(url, image_folder)
+
+    # Enregistrer les détails dans un CSV
+    save_to_csv(product_info, "single_product", product_folder)
+
     print(f"Produit exporté : {product_info['Product Title']}")
 
 
-# 5. Fonction pour récupérer les liens des catégories
 def fetch_category_links(url):
+    """
+    Récupère les liens de toutes les catégories disponibles sur la page principale.
+    """
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -103,24 +147,45 @@ def fetch_category_links(url):
         return []
 
 
-# 6. Fonction pour exporter les produits d'un catalogue entier
 def export_catalogue_products(url_catalogue):
+    """
+    Exporte les produits d'un catalogue entier.
+    """
     product_links, catalogue_name = fetch_catalogue_product_links(url_catalogue)
-    all_products = []
+    catalogue_folder = os.path.join(catalogue_name.replace(' ', '_'))
+    image_folder = os.path.join(catalogue_folder, 'images')
 
+    os.makedirs(image_folder, exist_ok=True)
+
+    all_products = []
     for link in product_links:
-        product_info = extract_product_details(link)
+        product_info = extract_product_details(link, image_folder)
         all_products.append(product_info)
 
-    save_to_csv(all_products, catalogue_name)
+    save_to_csv(all_products, catalogue_name, catalogue_folder)
 
 
-# 7. Fonction pour exporter tous les produits de toutes les catégories
 def export_all_catalogue_product(url):
+    """
+    Exporte tous les produits de toutes les catégories disponibles.
+    """
     category_links = fetch_category_links(url)
     for link in category_links[1:]:
         export_catalogue_products(link)
 
+
+def download_image(url, save_as):
+    """
+    Télécharge une image à partir de l'URL et l'enregistre localement.
+    """
+    response = requests.get(url, stream=True)
+    if response.status_code == 200:
+        with open(save_as, 'wb') as file:
+            for chunk in response.iter_content(1024):
+                file.write(chunk)
+        print(f"Image enregistrée : {save_as}")
+    else:
+        print(f"Échec du téléchargement de l'image : {response.status_code}")
 
 
 # Base URL de départ
