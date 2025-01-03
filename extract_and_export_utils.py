@@ -6,62 +6,46 @@ import csv
 
 
 # 1. Fonction pour extraire les informations d'un produit
-def extract_product_info(url):
-    # Récupérer la page
+def extract_product_details(url):
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
 
-    # Extraire le titre du produit
     product_title = soup.find('h1').get_text()
+    product_details_table = soup.find('table', class_='table table-striped')
 
-    # Extraire la table des détails du produit
-    table = soup.find('table', class_='table table-striped')
-
-    # Initialisation des en-têtes et des valeurs
     product_info = {'Product Title': product_title}
 
-    # Parcourir les lignes de la table
-    for tr in table.find_all('tr'):
-        th = tr.find('th').get_text()
-        td = tr.find('td').get_text()
-        product_info[th] = td
+    for row in product_details_table.find_all('tr'):
+        header = row.find('th').get_text()
+        value = row.find('td').get_text()
+        product_info[header] = value
 
     return product_info
 
 
-
-
-
-
-
-def write_to_csv(product_data, catalogue_name=None):
-    # Si aucune donnée, arrêter
+# 2. Fonction pour écrire des données dans un fichier CSV
+def save_to_csv(product_data, catalogue_name=None):
     if not product_data:
         print("Aucune donnée à écrire.")
         return
 
-    # Cas d'un seul produit (dictionnaire)
+    # Gérer le cas d'un produit unique
     if isinstance(product_data, dict):
-        product_data = [product_data]  # Convertir en liste pour uniformiser
+        product_data = [product_data]
 
-    # Si catalogue_name est fourni, créer un fichier global pour le catalogue
+    # Si un catalogue est spécifié
     if catalogue_name:
-        file_name = f"{catalogue_name}_catalogue_infos_{datetime.now().strftime('%Y-%m-%d')}.csv"
-
-        # Écriture dans le fichier global
+        file_name = f"{catalogue_name}_catalogue_infos_product{datetime.now().strftime('%Y-%m-%d')}.csv"
         with open(file_name, 'w', newline='', encoding='utf-8') as file:
             writer = csv.DictWriter(file, fieldnames=product_data[0].keys())
             writer.writeheader()
             writer.writerows(product_data)
         print(f"Catalogue complet exporté : {file_name}")
-
-    # Si aucun catalogue_name, créer un fichier CSV par produit
     else:
+        # Exporter chaque produit individuellement
         for product in product_data:
-            product_title =  product['Product Title']
+            product_title = product['Product Title']
             file_name = f"{product_title}_infos_{datetime.now().strftime('%Y-%m-%d')}.csv"
-
-            # Écriture pour chaque produit individuellement
             with open(file_name, 'w', newline='', encoding='utf-8') as file:
                 writer = csv.DictWriter(file, fieldnames=product.keys())
                 writer.writeheader()
@@ -69,56 +53,75 @@ def write_to_csv(product_data, catalogue_name=None):
             print(f"Produit exporté individuellement : {file_name}")
 
 
-base_url = "https://books.toscrape.com/catalogue/"
-
-
-# Fonction pour récupérer les liens des produits d'un catalogue
-def get_catalogue_links(url_catalogue):
+# 3. Fonction pour récupérer les liens de tous les produits dans un catalogue
+def fetch_catalogue_product_links(url_catalogue):
     links = []
+    catalogue_name = None
 
     while True:
-        # Effectuer la requête HTTP pour chaque page
         response = requests.get(url_catalogue)
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Récupérer tous les articles de la page actuelle
         articles = soup.find_all('article')
         catalogue_name = soup.find(class_="page-header action").get_text(strip=True)
 
         for article in articles:
-            link = article.find('a').attrs['href']
-            # Construire l'URL absolue
-            url_product = urljoin(base_url, link.replace('../../../', ''))
-            links.append(url_product)
+            product_link = article.find('a').attrs['href']
+            absolute_link = urljoin(base_url, product_link.replace('../../../', ''))
+            links.append(absolute_link)
 
-        # Vérifier s'il y a une page suivante
-        is_next = soup.find(class_="next")
-
-        if is_next:
-            next_page = is_next.find('a')['href']
-            url_catalogue = urljoin(url_catalogue, next_page)
+        # Vérifier la pagination
+        next_page = soup.find(class_="next")
+        if next_page:
+            next_page_link = next_page.find('a')['href']
+            url_catalogue = urljoin(url_catalogue, next_page_link)
         else:
             break
 
     return links, catalogue_name
 
-# 5. Exporter un seul produit par son URL
-def export_product_info(url):
-    product_info = extract_product_info(url)
-    write_to_csv(product_info)
+
+# 4. Fonction pour exporter un seul produit
+def export_single_product(url):
+    product_info = extract_product_details(url)
+    save_to_csv(product_info)
     print(f"Produit exporté : {product_info['Product Title']}")
 
 
-def export_product_infos_catalogue(url_catalogue):
-    # Récupérer les liens des produits et le nom du catalogue
-    product_links, catalogue_name = get_catalogue_links(url_catalogue)
+# 5. Fonction pour récupérer les liens des catégories
+def fetch_category_links(url):
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-    # Extraire les infos de chaque produit et les stocker dans une liste
+    links_section = soup.find(class_="side_categories")
+
+    if links_section:
+        category_links = [urljoin(url, link['href']) for link in links_section.find_all('a', href=True)]
+        return category_links
+    else:
+        print("Aucune catégorie trouvée.")
+        return []
+
+
+# 6. Fonction pour exporter les produits d'un catalogue entier
+def export_catalogue_products(url_catalogue):
+    product_links, catalogue_name = fetch_catalogue_product_links(url_catalogue)
     all_products = []
 
     for link in product_links:
-        product_info = extract_product_info(link)  # Extraire les infos du produit
-        all_products.append(product_info)  # Ajouter à la liste
+        product_info = extract_product_details(link)
+        all_products.append(product_info)
 
-    # Créer le fichier CSV global
-    write_to_csv(all_products, catalogue_name)
+    save_to_csv(all_products, catalogue_name)
+
+
+# 7. Fonction pour exporter tous les produits de toutes les catégories
+def export_all_catalogue_product(url):
+    category_links = fetch_category_links(url)
+    for link in category_links[1:]:
+        export_catalogue_products(link)
+
+
+
+# Base URL de départ
+base_url = "https://books.toscrape.com/catalogue/"
