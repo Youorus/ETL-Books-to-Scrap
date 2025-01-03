@@ -5,7 +5,7 @@ from extract_and_export_utils import export_all_catalogue_product
 # ===============================
 
 url_catalogue = "------ URL CATALOGUE -------"
-export_catalogue_products(url_catalogue)
+export_all_catalogue_product(url_catalogue)
 
 
 
