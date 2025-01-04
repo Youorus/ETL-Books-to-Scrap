@@ -7,10 +7,11 @@ import csv
 import re
 
 
-def extract_product_details(url, image_folder):
+
+def extract_product_details(url):
     """
     Extrait les détails d'un produit à partir de l'URL de la page produit.
-    Télécharge également l'image associée au produit.
+    Retourne les informations du produit et l'URL de l'image.
     """
     response = requests.get(url)
     soup = BeautifulSoup(response.content, 'html.parser')
@@ -23,59 +24,87 @@ def extract_product_details(url, image_folder):
     img_src = img_tag['src']
     img_url = urljoin(url, img_src)
 
-    # Nettoyer et limiter la longueur du nom
-    safe_title = re.sub(r'[^A-Za-z0-9 ]+', '', product_title)[:100]
-    if not safe_title:
-        safe_title = "Unknown_Product"
+    # Nettoyer le titre pour en faire un nom de fichier sûr
+    safe_title = re.sub(r'[^A-Za-z0-9]+', '-', product_title).lower()[:30]
 
-    # Utiliser la date et l'heure pour éviter les doublons
-    date_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-    image_name = f"{safe_title}_{date_str}_image.jpg"
+    # Initialisation des champs par défaut
+    product_info = {
+        'product_page_url': url,
+        'universal_product_code (upc)': 'N/A',
+        'title': product_title,
+        'price_including_tax': 'N/A',
+        'price_excluding_tax': 'N/A',
+        'number_available': 'N/A',
+        'product_description': 'N/A',
+        'category': 'N/A',
+        'review_rating': 'N/A',
+        'image_url': img_url
+    }
 
-    # Construire le chemin de l'image
-    image_path = os.path.join(image_folder, image_name)
-
-    # Télécharger l'image
-    download_image(img_url, image_path)
-
-    # Extraire les détails du produit
-    product_info = {'Product Title': product_title}
+    # Extraire les détails du produit (table)
     product_details_table = soup.find('table', class_='table table-striped')
-
     for row in product_details_table.find_all('tr'):
         header = row.find('th').get_text(strip=True)
         value = row.find('td').get_text(strip=True)
-        product_info[header] = value
 
-    return product_info
+        if header == "UPC":
+            product_info['universal_product_code (upc)'] = value
+        elif header == "Price (incl. tax)":
+            product_info['price_including_tax'] = clean_price(value)
+        elif header == "Price (excl. tax)":
+            product_info['price_excluding_tax'] = clean_price(value)
+        elif header == "Availability":
+            product_info['number_available'] = re.search(r'\d+', value).group(0) if re.search(r'\d+', value) else '0'
+        elif header == "Number of reviews":
+            product_info['review_rating'] = value
+
+    # Extraire la description du produit
+    description_tag = soup.select_one('#product_description ~ p')
+    if description_tag:
+        product_info['product_description'] = description_tag.text.strip()
+
+    # Extraire la catégorie
+    category = soup.select_one('.breadcrumb li:nth-child(3) a')
+    product_info['category'] = category.text.strip() if category else 'N/A'
+
+    return product_info, safe_title, img_url
 
 
-def save_to_csv(product_data, catalogue_name, folder):
+def save_to_csv(product_data, name, export_folder, is_single=False):
     """
-    Enregistre les informations des produits dans un fichier CSV.
+    Enregistre les informations dans un fichier CSV et gère la structure des dossiers
+    pour un produit unique, un catalogue complet ou toutes les catégories.
     """
-    if not product_data:
-        print("Aucune donnée à enregistrer.")
-        return
+    # Créer le dossier principal pour l'export
+    os.makedirs(export_folder, exist_ok=True)
 
-    # Créer le dossier s'il n'existe pas
-    os.makedirs(folder, exist_ok=True)
+    # Déterminer le nom du fichier CSV et de l'image
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    csv_name = f"{name}_details_{date_str}.csv"
+    csv_path = os.path.join(export_folder, csv_name)
 
-    # Créer le nom du fichier CSV
-    file_name = f"{catalogue_name}_infos_{datetime.now().strftime('%Y-%m-%d')}.csv"
-    save_path = os.path.join(folder, file_name)
+    # Créer le dossier d'images
+    image_folder = os.path.join(export_folder, 'images')
+    os.makedirs(image_folder, exist_ok=True)
 
-    # Gérer les cas d'un produit unique
-    if isinstance(product_data, dict):
+    # Gérer les cas d'un produit unique (pour export_single_product)
+    if is_single and isinstance(product_data, dict):
         product_data = [product_data]
 
-    # Enregistrer dans un fichier CSV
-    with open(save_path, 'w', newline='', encoding='utf-8') as file:
-        writer = csv.DictWriter(file, fieldnames=product_data[0].keys())
+    # En-têtes du CSV
+    headers = [
+        'product_page_url', 'universal_product_code (upc)', 'title',
+        'price_including_tax', 'price_excluding_tax', 'number_available',
+        'product_description', 'category', 'review_rating', 'image_url'
+    ]
+
+    # Écriture dans le CSV
+    with open(csv_path, 'w', newline='', encoding='utf-8') as file:
+        writer = csv.DictWriter(file, fieldnames=headers)
         writer.writeheader()
         writer.writerows(product_data)
 
-    print(f"Catalogue exporté : {save_path}")
+    print(f"CSV exporté : {csv_path}")
 
 
 def fetch_catalogue_product_links(url_catalogue):
@@ -114,20 +143,20 @@ def export_single_product(url):
     """
     Exporte les informations d'un seul produit dans un dossier spécifique.
     """
-    product_folder = os.path.join("Product_Info")
-    os.makedirs(product_folder, exist_ok=True)
+    product_info, safe_title, img_url = extract_product_details(url)
+    date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    folder_name = f"{safe_title}_details"
 
-    # Dossier pour les images
+    # Créer le dossier principal du produit
+    product_folder = os.path.join(folder_name)
     image_folder = os.path.join(product_folder, 'images')
     os.makedirs(image_folder, exist_ok=True)
 
-    # Extraire les détails du produit
-    product_info = extract_product_details(url, image_folder)
+    # Télécharger l'image
+    download_image(img_url, os.path.join(image_folder, f"{safe_title}_{date_str}.jpg"))
 
     # Enregistrer les détails dans un CSV
-    save_to_csv(product_info, "single_product", product_folder)
-
-    print(f"Produit exporté : {product_info['Product Title']}")
+    save_to_csv(product_info, safe_title, product_folder, is_single=True)
 
 
 def fetch_category_links(url):
@@ -159,8 +188,13 @@ def export_catalogue_products(url_catalogue):
 
     all_products = []
     for link in product_links:
-        product_info = extract_product_details(link, image_folder)
+        product_info, safe_title, img_url = extract_product_details(link)
         all_products.append(product_info)
+
+        # Télécharger l'image
+        date_str = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+        image_path = os.path.join(image_folder, f"{safe_title}_{date_str}.jpg")
+        download_image(img_url, image_path)
 
     save_to_csv(all_products, catalogue_name, catalogue_folder)
 
@@ -173,11 +207,15 @@ def export_all_catalogue_product(url):
     for link in category_links[1:]:
         export_catalogue_products(link)
 
+def clean_price(price_str):
+    """
+    Nettoie et formate correctement le prix.
+    Ex : "£45.20" -> 45.20
+    """
+    clean_str = re.sub(r'[^\d.]', '', price_str)
+    return float(clean_str) if clean_str else 'N/A'
 
 def download_image(url, save_as):
-    """
-    Télécharge une image à partir de l'URL et l'enregistre localement.
-    """
     response = requests.get(url, stream=True)
     if response.status_code == 200:
         with open(save_as, 'wb') as file:
