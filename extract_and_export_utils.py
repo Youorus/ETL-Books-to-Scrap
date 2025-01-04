@@ -183,7 +183,6 @@ def download_image(url, save_as):
         with open(save_as, 'wb') as file:
             for chunk in response.iter_content(1024):
                 file.write(chunk)
-        print(f"Image enregistrée : {save_as}")
     else:
         print(f"Échec du téléchargement de l'image : {response.status_code}")
 
